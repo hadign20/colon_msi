@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 from src.feature_selection.correlation import remove_collinear_features
-from src.feature_selection.feature_analysis import *
+from src.feature_selection.feature_selection import *
 
 #=========================================
 # set paths
@@ -43,12 +43,13 @@ def main():
     if FEATURE_CORRELATION:
         df = remove_collinear_features(df, corr_thresh)
 
-    if FEATURE_ANALYSIS:
+    if FEATURE_SELECTION:
         p_values_df = calculate_p_values(df, outcome_column, categorical_columns, exclude_columns)
         auc_values_df = calculate_auc_values(df, outcome_column, categorical_columns, exclude_columns)
-        save_feature_analysis(p_values_df, auc_values_df, results_dir)
+        mrmr_df = MRMR_feature_count(df, outcome_column, categorical_columns, exclude_columns, 20, 20)
+        save_feature_analysis(p_values_df, auc_values_df, mrmr_df, results_dir)
 
-    if FEATURE_SELECTION:
+
 
 
 

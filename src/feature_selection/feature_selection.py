@@ -7,11 +7,14 @@ from sklearn.metrics import roc_curve, roc_auc_score, auc
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 import seaborn as sns
+from mrmr import mrmr_classif
+from sklearn.model_selection import KFold
+from collections import defaultdict
 from typing import List, Optional
 
 def calculate_p_values(df: pd.DataFrame,
                        outcome_column: str,
-                       categorical_columns: List[str],
+                       categorical_columns: List[str] = [],
                        exclude_columns: List[str] = [],
                        test_numeric: Optional[str] = 'wilcox',
                        test_categorical: Optional[str] = 'fisher') -> pd.DataFrame:
@@ -72,7 +75,7 @@ def calculate_p_values(df: pd.DataFrame,
 
 def calculate_auc_values(df: pd.DataFrame,
                        outcome_column: str,
-                       categorical_columns: List[str],
+                       categorical_columns: List[str] = [],
                        exclude_columns: List[str] = [] ) -> pd.DataFrame:
     """
     Calculate auc-values for each feature in the dataframe compared to the outcome variable.
@@ -110,25 +113,62 @@ def calculate_auc_values(df: pd.DataFrame,
     return auc_values_df
 
 
+
+
+
+def MRMR_feature_count(df: pd.DataFrame,
+                           outcome_column: str,
+                           categorical_columns: List[str] = [],
+                           exclude_columns: List[str] = [],
+                           num_features: Optional[int] = 10,
+                           CV_folds: Optional[int] = 20) -> pd.DataFrame:
+    """
+    Select best features defined by cross validation on MRMR method.
+
+    :param df: DataFrame containing features and the outcome variable.
+    :param outcome_column: The name of the outcome column.
+    :param exclude_columns: List of columns to exclude from the analysis.
+    :return: DataFrame with MRMR-selected features.
+    """
+    x = df.loc[:, ~df.columns.isin(exclude_columns + [outcome_column])]
+    y = df[outcome_column]
+
+    kf = KFold(n_splits=CV_folds)
+    selected_feature_count = defaultdict(int)
+
+    for train_index, val_index in kf.split(x):
+        x_train_fold, x_val_fold = x.iloc[train_index], x.iloc[val_index]
+        y_train_fold, y_val_fold = y.iloc[train_index], y.iloc[val_index]
+        selected_features_fold = mrmr_classif(X = x_train_fold, y = y_train_fold, K = num_features)
+        for feature in selected_features_fold:
+            selected_feature_count[feature] += 1
+
+    mrmr_count_df = pd.DataFrame(list(selected_feature_count.items()), columns=['Feature', 'MRMR_Count'])
+    mrmr_count_df = mrmr_count_df.sort_values(by=['MRMR_Count'], ascending=False)
+    return mrmr_count_df
+
+
+
+
+
+
 def save_feature_analysis(p_values_df: pd.DataFrame,
                           auc_values_df: pd.DataFrame,
+                          mrmr_count_df: pd.DataFrame,
                           results_dir: str):
     """
     Save the resutls of feature analysis to the output dir.
 
-    :param p_values_df: The name of the outcome column.
-    :param auc_values_df: List of names of categorical feature columns.
+    :param p_values_df: DF of feature p-values.
+    :param auc_values_df: DF of feature AUC values.
+    :param mrmr_count_df: DF of selected features by MRMR.
     :param results_dir: Path to reulsts directory.
     """
-    analysis_df = p_values_df.merge(auc_values_df, on='Feature')
-    analysis_df = analysis_df.sort_values(by=['AUC', 'P_Value'], ascending=[False, True])
+    analysis_df = p_values_df.merge(auc_values_df, on='Feature').merge(mrmr_count_df, on='Feature')
+    analysis_df = analysis_df.sort_values(by=['AUC', 'P_Value', 'MRMR_Count'], ascending=[False, True, False])
 
     output_dir = os.path.join(results_dir, "feature_analysis")
     os.makedirs(output_dir, exist_ok=True)
     analysis_df.to_excel(os.path.join(output_dir, 'feature_analysis.xlsx'), index=False)
-
-
-
-
 
 
