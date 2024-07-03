@@ -6,9 +6,11 @@
   <component name="ChangeListManager">
     <list default="true" id="8ee4bbc1-d899-4123-96f4-125597e307d1" name="Changes" comment="">
       <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/model/model_building.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/notebooks/feature_analysis.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/notebooks/feature_analysis.ipynb" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/results/TumorTexture/feature_analysis/feature_analysis.csv" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/results/TumorTexture/feature_analysis/feature_analysis.xlsx" beforeDir="false" afterPath="$PROJECT_DIR$/results/TumorTexture/feature_analysis/feature_analysis.xlsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/results/empty.txt" beforeDir="false" />
