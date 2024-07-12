@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV, RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
@@ -8,16 +9,31 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import (accuracy_score, roc_auc_score, confusion_matrix, classification_report,
                              precision_score, recall_score, f1_score, roc_curve)
 from scipy import stats
+import seaborn as sns
+from openpyxl import load_workbook
+
 
 def get_classifiers():
     """
-    Returns a dictionary of classifiers to be evaluated.
+    Returns a dictionary of classifiers with their hyperparameter grids to be evaluated.
     """
     return {
-        'RandomForest': RandomForestClassifier(),
-        'SVM': SVC(probability=True),
-        'LogisticRegression': LogisticRegression(),
-        'NaiveBayes': GaussianNB()
+        'RandomForest': (RandomForestClassifier(), {
+            'n_estimators': [100, 200, 300, 400, 500],
+            'max_features': ['auto', 'sqrt', 'log2'],
+            'max_depth': [4, 6, 8, 10, 12],
+            'criterion': ['gini', 'entropy']
+        }),
+        'SVM': (SVC(probability=True), {
+            'C': [0.1, 1, 10, 100, 1000],
+            'gamma': [1, 0.1, 0.01, 0.001, 0.0001],
+            'kernel': ['rbf', 'poly', 'sigmoid']
+        }),
+        'LogisticRegression': (LogisticRegression(), {
+            'penalty': ['l1', 'l2'],
+            'C': [0.01, 0.1, 1, 10, 100]
+        }),
+        'NaiveBayes': (GaussianNB(), {})
     }
 
 
@@ -79,53 +95,83 @@ def compute_confidence_interval(metric, n, alpha=0.95):
     return metric - h, metric + h
 
 
-def train_test_split_evaluation(X, y, test_size=0.2, random_state=42):
+def hyperparameter_tuning(clf, param_grid, X_train, y_train, name):
     """
-    Perform train/test split and evaluate models.
+    Perform hyperparameter tuning using GridSearchCV.
 
     Parameters:
-    X (pd.DataFrame): Feature matrix.
-    y (pd.Series): Target vector.
-    test_size (float): Proportion of the dataset to include in the test split.
-    random_state (int): Random seed for reproducibility.
+    clf: The classifier to tune.
+    param_grid (dict): The parameter grid to search over.
+    X_train (pd.DataFrame): The training feature matrix.
+    y_train (pd.Series): The training target vector.
+    name (str): The name of the classifier.
 
     Returns:
-    dict: Results for each classifier.
+    The best estimator found by GridSearchCV.
     """
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
+    grid_search = GridSearchCV(estimator=clf, param_grid=param_grid, cv=skf, n_jobs=-1, scoring='roc_auc')
+    grid_search.fit(X_train, y_train)
+
+    # Save grid search results
+    results_df = pd.DataFrame(grid_search.cv_results_)
+    results_df.to_csv(f'{name}_grid_search_results.csv', index=False)
+
+    print(f"Best parameters for {name}: {grid_search.best_params_}")
+    print(f"Best cross-validation score for {name}: {grid_search.best_score_}")
+
+    return grid_search.best_estimator_
+
+
+def train_test_split_evaluation(X, y,
+                      test_size=0.3,
+                      random_state=42,
+                      tuning=True):
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
     classifiers = get_classifiers()
     results = {}
     train_results = {}
     test_results = {}
 
-    for classifier_name, clf in classifiers.items():
-        clf.fit(X_train, y_train)
-        y_pred = clf.predict(X_train)
-        y_pred_prob = clf.predict_proba(X_train)[:, 1] if hasattr(clf, "predict_proba") else None
-        metrics, ci = compute_metrics(y_train, y_pred, y_pred_prob)
+    for classifier_name, (clf, param_grid) in classifiers.items():
+        tuned_clf = hyperparameter_tuning(clf, param_grid, X_train, y_train, classifier_name)
+        tuned_clf.fit(X_train, y_train)
+
+        y_pred_train = tuned_clf.predict(X_train)
+        y_pred_prob_train = tuned_clf.predict_proba(X_train)[:, 1] if hasattr(tuned_clf, "predict_proba") else None
+        metrics_train, ci_train = compute_metrics(y_train, y_pred_train, y_pred_prob_train)
         train_results[classifier_name] = {
-            'metrics': metrics,
-            'confidence_intervals': ci
+            'metrics': metrics_train,
+            'confidence_intervals': ci_train
         }
 
-    for classifier_name, clf in classifiers.items():
-        clf.fit(X_train, y_train)
-        y_pred = clf.predict(X_test)
-        y_pred_prob = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
-        metrics, ci = compute_metrics(y_test, y_pred, y_pred_prob)
+        y_pred_test = tuned_clf.predict(X_test)
+        y_pred_prob_test = tuned_clf.predict_proba(X_test)[:, 1] if hasattr(tuned_clf, "predict_proba") else None
+        metrics_test, ci_test = compute_metrics(y_test, y_pred_test, y_pred_prob_test)
         test_results[classifier_name] = {
-            'metrics': metrics,
-            'confidence_intervals': ci
+            'metrics': metrics_test,
+            'confidence_intervals': ci_test
         }
+
+        # Plot ROC curve for the test set
+        fpr, tpr, _ = roc_curve(y_test, y_pred_prob_test)
+        roc_auc = roc_auc_score(y_test, y_pred_prob_test)
+        plot_roc_curve(fpr, tpr, roc_auc, f'{classifier_name} ROC Curve', f'{classifier_name}_roc_curve.png')
+
+        # Plot feature importance for tree-based models
+        if classifier_name == 'RandomForest':
+            plot_feature_importance(tuned_clf.feature_importances_, X.columns, 'Feature Importance',
+                                    'feature_importance.png')
 
     results['train'] = train_results
     results['test'] = test_results
 
-
     return results
 
 
-def cross_validation_evaluation(X, y, cv=10):
+
+def cross_validation_evaluation(X, y, cv_folds=5, tuning=True):
     """
     Perform cross-validation and evaluate models.
 
@@ -140,18 +186,22 @@ def cross_validation_evaluation(X, y, cv=10):
     classifiers = get_classifiers()
     results = {}
 
-    for name, clf in classifiers.items():
-        skf = StratifiedKFold(n_splits=cv)
+    for name, (clf, param_grid) in classifiers.items():
         metrics_list = []
-        for train_index, test_index in skf.split(X, y):
-            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
-            y_train, y_test = y.iloc[train_index], y.iloc[test_index]
-            clf.fit(X_train, y_train)
-            y_pred = clf.predict(X_test)
-            y_pred_prob = clf.predict_proba(X_test)[:,1] if hasattr(clf, "predict_proba") else None
-            metrics, _ = compute_metrics(y_test, y_pred, y_pred_prob)
-            metrics_list.append(metrics)
+        best_estimators = []
 
+        tuned_clf = hyperparameter_tuning(clf, param_grid, X, y, name)
+        tuned_clf.fit(X, y)
+        best_estimators.append(tuned_clf)
+
+        print(f"best parameters for {name}", tuned_clf.best_params_)
+
+        y_pred = tuned_clf.predict(X_test)
+        y_pred_prob = tuned_clf.predict_proba(X_test)[:, 1] if hasattr(tuned_clf, "predict_proba") else None
+        metrics, _ = compute_metrics(y_test, y_pred, y_pred_prob)
+        metrics_list.append(metrics)
+
+        # Average metrics and confidence intervals across folds
         averaged_metrics = {metric: np.mean([m[metric] for m in metrics_list if m[metric] is not None]) for metric in metrics_list[0]}
         ci = {metric: compute_confidence_interval(averaged_metrics[metric], y.size) for metric in averaged_metrics}
 
@@ -159,77 +209,123 @@ def cross_validation_evaluation(X, y, cv=10):
             'metrics': averaged_metrics,
             'confidence_intervals': ci
         }
+
+
     return results
 
 
-def evaluate_models(X, y, method='train_test_split', **kwargs):
+
+
+
+
+
+def plot_roc_curve(fpr, tpr, auc, title, filename):
     """
-    Evaluate models using the specified method.
+    Plot ROC curve and save the plot.
 
     Parameters:
-    X (pd.DataFrame): Feature matrix.
-    y (pd.Series): Target vector.
-    method (str): Evaluation method ('train_test_split' or 'cross_validation').
-    kwargs: Additional arguments for the evaluation methods.
-
-    Returns:
-    dict: Evaluation results for each classifier.
+    fpr (array-like): False positive rates.
+    tpr (array-like): True positive rates.
+    auc (float): Area Under the Curve.
+    title (str): Title of the plot.
+    filename (str): Filename to save the plot.
     """
-    if method == 'train_test_split':
-        return train_test_split_evaluation(X, y, **kwargs)
-    elif method == 'cross_validation':
-        return cross_validation_evaluation(X, y, **kwargs)
-    else:
-        raise ValueError("Invalid method. Choose 'train_test_split' or 'cross_validation'.")
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(title)
+    plt.legend(loc="lower right")
+    plt.savefig(filename)
+    plt.close()
+
+def plot_feature_importance(importances, features, title, filename):
+    """
+    Plot feature importance and save the plot.
+
+    Parameters:
+    importances (array-like): Feature importances.
+    features (array-like): Feature names.
+    title (str): Title of the plot.
+    filename (str): Filename to save the plot.
+    """
+    indices = np.argsort(importances)[::-1]
+    plt.figure()
+    plt.title(title)
+    plt.bar(range(len(importances)), importances[indices], color="r", align="center")
+    plt.xticks(range(len(importances)), [features[i] for i in indices], rotation=90)
+    plt.xlim([-1, len(importances)])
+    plt.tight_layout()
+    plt.savefig(filename)
+    plt.close()
 
 
-def save_classification_results(results, output_file, method='train_test_split'):
+def save_classification_results(results, output_file, num_features, method='train_test_split'):
     """
     Save evaluation results to an Excel file.
 
     Parameters:
     results (dict): Evaluation results for each classifier.
     output_file (str): Path to save the Excel file.
+    num_features (int): Number of features used in the classification.
+    method (str): Method used for evaluation ('train_test_split' or 'cross_validation').
     """
+    print(f"Saving evaluation results to {output_file} using method '{method}' with {num_features} features.")
+
     if method == 'train_test_split':
         rows = []
         for dataset, classification_results in results.items():
             for classifier, data in classification_results.items():
-                metrics = data['metrics']
-                ci = data['confidence_intervals']
+                metrics = data.get('metrics', {})
+                ci = data.get('confidence_intervals', {})
                 row = [
                     dataset.capitalize(),
                     classifier,
-                    f"{metrics['roc_auc']:.2f} ({ci['roc_auc'][0]:.2f}, {ci['roc_auc'][1]:.2f})" if 'roc_auc' in metrics else 'N/A',
-                    f"{metrics['sensitivity']:.2f} ({ci['sensitivity'][0]:.2f}, {ci['sensitivity'][1]:.2f})",
-                    f"{metrics['specificity']:.2f} ({ci['specificity'][0]:.2f}, {ci['specificity'][1]:.2f})",
-                    f"{metrics['ppv']:.2f} ({ci['ppv'][0]:.2f}, {ci['ppv'][1]:.2f})",
-                    f"{metrics['npv']:.2f} ({ci['npv'][0]:.2f}, {ci['npv'][1]:.2f})",
+                    f"{metrics.get('roc_auc', 'N/A'):.2f} ({ci.get('roc_auc', ['N/A', 'N/A'])[0]:.2f}, {ci.get('roc_auc', ['N/A', 'N/A'])[1]:.2f})",
+                    f"{metrics.get('sensitivity', 'N/A'):.2f} ({ci.get('sensitivity', ['N/A', 'N/A'])[0]:.2f}, {ci.get('sensitivity', ['N/A', 'N/A'])[1]:.2f})",
+                    f"{metrics.get('specificity', 'N/A'):.2f} ({ci.get('specificity', ['N/A', 'N/A'])[0]:.2f}, {ci.get('specificity', ['N/A', 'N/A'])[1]:.2f})",
+                    f"{metrics.get('ppv', 'N/A'):.2f} ({ci.get('ppv', ['N/A', 'N/A'])[0]:.2f}, {ci.get('ppv', ['N/A', 'N/A'])[1]:.2f})",
+                    f"{metrics.get('npv', 'N/A'):.2f} ({ci.get('npv', ['N/A', 'N/A'])[0]:.2f}, {ci.get('npv', ['N/A', 'N/A'])[1]:.2f})",
                 ]
                 rows.append(row)
 
-        df = pd.DataFrame(rows, columns=['Dataset', 'Classifier', 'AUC (95% CI)', 'Sensitivity (95% CI)', 'Specificity (95% CI)',
+        df = pd.DataFrame(rows, columns=['Dataset', 'Classifier', 'AUC (95% CI)', 'Sensitivity (95% CI)',
+                                         'Specificity (95% CI)',
                                          'PPV (95% CI)', 'NPV (95% CI)'])
-        df.to_excel(output_file, index=False)
 
     elif method == 'cross_validation':
         rows = []
         for classifier, data in results.items():
-            metrics = data['metrics']
-            ci = data['confidence_intervals']
+            metrics = data.get('metrics', {})
+            ci = data.get('confidence_intervals', {})
             row = [
                 classifier,
-                f"{metrics['roc_auc']:.2f} ({ci['roc_auc'][0]:.2f}, {ci['roc_auc'][1]:.2f})" if 'roc_auc' in metrics else 'N/A',
-                f"{metrics['sensitivity']:.2f} ({ci['sensitivity'][0]:.2f}, {ci['sensitivity'][1]:.2f})",
-                f"{metrics['specificity']:.2f} ({ci['specificity'][0]:.2f}, {ci['specificity'][1]:.2f})",
-                f"{metrics['ppv']:.2f} ({ci['ppv'][0]:.2f}, {ci['ppv'][1]:.2f})",
-                f"{metrics['npv']:.2f} ({ci['npv'][0]:.2f}, {ci['npv'][1]:.2f})",
+                f"{metrics.get('roc_auc', 'N/A'):.2f} ({ci.get('roc_auc', ['N/A', 'N/A'])[0]:.2f}, {ci.get('roc_auc', ['N/A', 'N/A'])[1]:.2f})",
+                f"{metrics.get('sensitivity', 'N/A'):.2f} ({ci.get('sensitivity', ['N/A', 'N/A'])[0]:.2f}, {ci.get('sensitivity', ['N/A', 'N/A'])[1]:.2f})",
+                f"{metrics.get('specificity', 'N/A'):.2f} ({ci.get('specificity', ['N/A', 'N/A'])[0]:.2f}, {ci.get('specificity', ['N/A', 'N/A'])[1]:.2f})",
+                f"{metrics.get('ppv', 'N/A'):.2f} ({ci.get('ppv', ['N/A', 'N/A'])[0]:.2f}, {ci.get('ppv', ['N/A', 'N/A'])[1]:.2f})",
+                f"{metrics.get('npv', 'N/A'):.2f} ({ci.get('npv', ['N/A', 'N/A'])[0]:.2f}, {ci.get('npv', ['N/A', 'N/A'])[1]:.2f})",
             ]
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=['Classifier', 'AUC (95% CI)', 'Sensitivity (95% CI)', 'Specificity (95% CI)',
                                          'PPV (95% CI)', 'NPV (95% CI)'])
-        df.to_excel(output_file, index=False)
 
     else:
         raise ValueError("Invalid method. Choose 'train_test_split' or 'cross_validation'.")
+
+    try:
+        # Try to open an existing workbook
+        book = load_workbook(output_file)
+        writer = pd.ExcelWriter(output_file, engine='openpyxl')
+        writer.book = book
+    except FileNotFoundError:
+        # If the file does not exist, create a new one
+        writer = pd.ExcelWriter(output_file, engine='openpyxl')
+
+    df.to_excel(writer, index=False, sheet_name=str(num_features))
+    writer.save()
+    writer.close()

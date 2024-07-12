@@ -11,6 +11,7 @@ from mrmr import mrmr_classif
 from sklearn.model_selection import KFold
 from collections import defaultdict
 from typing import List, Optional
+from openpyxl import load_workbook
 
 def calculate_p_values(df: pd.DataFrame,
                        outcome_column: str,
@@ -130,11 +131,14 @@ def MRMR_feature_count(df: pd.DataFrame,
     :param exclude_columns: List of columns to exclude from the analysis.
     :return: DataFrame with MRMR-selected features.
     """
+    print("Selecting best features defined by cross validation on MRMR method.")
     x = df.loc[:, ~df.columns.isin(exclude_columns + [outcome_column])]
     y = df[outcome_column]
 
     kf = KFold(n_splits=CV_folds)
     selected_feature_count = defaultdict(int)
+    for feature in x.columns:
+        selected_feature_count[feature] = 0
 
     for train_index, val_index in kf.split(x):
         x_train_fold, x_val_fold = x.iloc[train_index], x.iloc[val_index]
@@ -149,12 +153,62 @@ def MRMR_feature_count(df: pd.DataFrame,
 
 
 
+def calculate_feature_scores(p_values_df: pd.DataFrame,
+                          auc_values_df: pd.DataFrame,
+                          mrmr_count_df: pd.DataFrame,
+                          results_dir: str):
+    """
+    factor in p-value, AUC, and MRMR count simultaneously,
+    to create a composite score that combines these metrics.
+    This composite score can then be used to rank the features.
+    :param p_values_df: DF of feature p-values.
+    :param auc_values_df: DF of feature AUC values.
+    :param mrmr_count_df: DF of selected features by MRMR.
+    :param results_dir: Path to reulsts directory.
+    :return: DataFrame with selected features.
+    """
+    # normalize each metric
+    normalized_df = pd.DataFrame()
+    normalized_df['Feature'] = p_values_df['Feature']
+    normalized_df['Normalized_P_Value'] = (p_values_df['P_Value'] - p_values_df['P_Value'].min()) / (
+            p_values_df['P_Value'].max() - p_values_df['P_Value'].min())
+    normalized_df['Normalized_AUC'] = (auc_values_df['AUC'] - auc_values_df['AUC'].min()) / (
+            auc_values_df['AUC'].max() - auc_values_df['AUC'].min())
+    normalized_df['Normalized_MRMR_Count'] = (mrmr_count_df['MRMR_Count'] - mrmr_count_df['MRMR_Count'].min()) / (
+            mrmr_count_df['MRMR_Count'].max() - mrmr_count_df['MRMR_Count'].min())
 
+    # Assign weights to each metric
+    w_p_value = 0.2
+    w_auc = 0.4
+    w_mrmr_count = 0.4
+
+    # Calculate composite score
+    normalized_df['Composite_Score'] = (w_p_value * (1 - normalized_df['Normalized_P_Value']) +
+                                        w_auc * normalized_df['Normalized_AUC'] +
+                                        w_mrmr_count * normalized_df['Normalized_MRMR_Count'])
+
+    # Sort features based on the composite score
+    normalized_df = normalized_df.sort_values(by='Composite_Score', ascending=False)
+
+    # Plot the composite score for each feature
+    plt.figure(figsize=(12,8))
+    plt.barh(normalized_df['Feature'], normalized_df['Composite_Score'], color='skyblue')
+    plt.xlabel = 'Composite Score'
+    plt.ylabel = 'Features'
+    plt.title = 'Feature Importance based on Composite Score'
+    plt.gca().invert_yaxis()
+
+    output_dir = os.path.join(results_dir, "feature_analysis")
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(os.path.join(output_dir, 'feature_composite_score.png'))
+
+    return normalized_df
 
 
 def save_feature_analysis(p_values_df: pd.DataFrame,
                           auc_values_df: pd.DataFrame,
                           mrmr_count_df: pd.DataFrame,
+                          composite_df: pd.DataFrame,
                           results_dir: str):
     """
     Save the resutls of feature analysis to the output dir.
@@ -162,13 +216,16 @@ def save_feature_analysis(p_values_df: pd.DataFrame,
     :param p_values_df: DF of feature p-values.
     :param auc_values_df: DF of feature AUC values.
     :param mrmr_count_df: DF of selected features by MRMR.
+    :param composite_df: DF of selected features by combination.
     :param results_dir: Path to reulsts directory.
     """
-    analysis_df = p_values_df.merge(auc_values_df, on='Feature').merge(mrmr_count_df, on='Feature')
-    analysis_df = analysis_df.sort_values(by=['AUC', 'P_Value', 'MRMR_Count'], ascending=[False, True, False])
+    analysis_df = p_values_df.merge(auc_values_df, on='Feature').merge(mrmr_count_df, on='Feature').merge(composite_df, on='Feature')
+    analysis_df = analysis_df.sort_values(by=['Composite_Score', 'AUC', 'P_Value', 'MRMR_Count'], ascending=[False, False, True, False])
 
     output_dir = os.path.join(results_dir, "feature_analysis")
     os.makedirs(output_dir, exist_ok=True)
-    analysis_df.to_excel(os.path.join(output_dir, 'feature_analysis.xlsx'), index=False)
+    output_file = os.path.join(output_dir, 'feature_analysis.xlsx')
+    analysis_df.to_excel(output_file, index=False)
+
 
 

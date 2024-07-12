@@ -30,4 +30,8 @@ def remove_collinear_features(df, threshold):
     x_dropped = x.drop(columns = to_drop)
 
     out_df = pd.concat([case, x_dropped, y], axis=1)
+
+    print(f"Features with correlation coefficient larger than {threshold} were removed.")
+    print(f"Among the {x.shape[1]} features, {x_dropped.shape[1]} were selected.")
+
     return out_df
