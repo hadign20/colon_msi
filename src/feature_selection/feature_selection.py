@@ -116,7 +116,6 @@ def calculate_auc_values(df: pd.DataFrame,
 
 
 
-
 def MRMR_feature_count(df: pd.DataFrame,
                            outcome_column: str,
                            categorical_columns: List[str] = [],
@@ -193,14 +192,14 @@ def calculate_feature_scores(p_values_df: pd.DataFrame,
     # Plot the composite score for each feature
     plt.figure(figsize=(12,8))
     plt.barh(normalized_df['Feature'], normalized_df['Composite_Score'], color='skyblue')
-    plt.xlabel = 'Composite Score'
-    plt.ylabel = 'Features'
-    plt.title = 'Feature Importance based on Composite Score'
+    plt.xlabel('Composite Score')
+    plt.ylabel('Features')
+    plt.title('Feature Importance based on Composite Score')
     plt.gca().invert_yaxis()
 
-    output_dir = os.path.join(results_dir, "feature_analysis")
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(os.path.join(output_dir, 'feature_composite_score.png'))
+    #output_dir = os.path.join(results_dir, "feature_analysis")
+    #os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(os.path.join(results_dir, 'feature_composite_score.png'))
 
     return normalized_df
 
@@ -222,9 +221,9 @@ def save_feature_analysis(p_values_df: pd.DataFrame,
     analysis_df = p_values_df.merge(auc_values_df, on='Feature').merge(mrmr_count_df, on='Feature').merge(composite_df, on='Feature')
     analysis_df = analysis_df.sort_values(by=['Composite_Score', 'AUC', 'P_Value', 'MRMR_Count'], ascending=[False, False, True, False])
 
-    output_dir = os.path.join(results_dir, "feature_analysis")
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, 'feature_analysis.xlsx')
+    #output_dir = os.path.join(results_dir, "feature_analysis")
+    #os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(results_dir, 'feature_analysis.xlsx')
     analysis_df.to_excel(output_file, index=False)
 
 
