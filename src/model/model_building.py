@@ -39,6 +39,18 @@ def get_classifiers():
     }
 
 
+def get_classifiers_simple():
+    """
+    Returns a dictionary of classifiers with their hyperparameter grids to be evaluated.
+    """
+    return {
+        'RandomForest': RandomForestClassifier(class_weight='balanced'),
+        'SVM': SVC(probability=True, class_weight='balanced'),
+        'LogisticRegression': LogisticRegression(class_weight='balanced'),
+        'NaiveBayes': GaussianNB()
+    }
+
+
 def compute_metrics(y_true, y_pred, y_pred_prob):
     """
     Compute evaluation metrics and their confidence intervals.
@@ -173,7 +185,7 @@ def train_test_split_evaluation(X, y,
 
 
 
-def cross_validation_evaluation(X, y, cv_folds=5, tuning=True):
+def cross_validation_evaluation(X, y, cv_folds=5, tuning=False):
     """
     Perform cross-validation and evaluate models.
 
@@ -185,35 +197,59 @@ def cross_validation_evaluation(X, y, cv_folds=5, tuning=True):
     Returns:
     dict: Results for each classifier.
     """
-    classifiers = get_classifiers()
     results = {}
-
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=17)
 
-    for name, (clf, param_grid) in classifiers.items():
-        metrics_list = []
+    if tuning:
+        classifiers = get_classifiers()
 
-        if tuning:
+        for name, (clf, param_grid) in classifiers.items():
+            metrics_list = []
             clf = hyperparameter_tuning(clf, param_grid, X, y, name)
 
-        for train_index, test_index in skf.split(X, y):
-            X_train, X_test = X.iloc[train_index], X.iloc[test_index]
-            y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+            for train_index, test_index in skf.split(X, y):
+                X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+                y_train, y_test = y.iloc[train_index], y.iloc[test_index]
 
-            clf.fit(X_train, y_train)
-            y_pred = clf.predict(X_test)
-            y_pred_prob = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
-            metrics, _ = compute_metrics(y_test, y_pred, y_pred_prob)
-            metrics_list.append(metrics)
+                clf.fit(X_train, y_train)
+                y_pred = clf.predict(X_test)
+                y_pred_prob = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
+                metrics, _ = compute_metrics(y_test, y_pred, y_pred_prob)
+                metrics_list.append(metrics)
 
-        # Average metrics and confidence intervals across folds
-        averaged_metrics = {metric: np.mean([m[metric] for m in metrics_list if m[metric] is not None]) for metric in metrics_list[0]}
-        ci = {metric: compute_confidence_interval(averaged_metrics[metric], y.size) for metric in averaged_metrics}
+            # Average metrics and confidence intervals across folds
+            averaged_metrics = {metric: np.mean([m[metric] for m in metrics_list if m[metric] is not None]) for metric in metrics_list[0]}
+            ci = {metric: compute_confidence_interval(averaged_metrics[metric], y.size) for metric in averaged_metrics}
 
-        results[name] = {
-            'metrics': averaged_metrics,
-            'confidence_intervals': ci
-        }
+            results[name] = {
+                'metrics': averaged_metrics,
+                'confidence_intervals': ci
+            }
+    else:
+        classifiers = get_classifiers_simple()
+
+        for name, clf in classifiers.items():
+            metrics_list = []
+
+            for train_index, test_index in skf.split(X, y):
+                X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+                y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+                clf.fit(X_train, y_train)
+                y_pred = clf.predict(X_test)
+                y_pred_prob = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else None
+                metrics, _ = compute_metrics(y_test, y_pred, y_pred_prob)
+                metrics_list.append(metrics)
+
+            # Average metrics and confidence intervals across folds
+            averaged_metrics = {metric: np.mean([m[metric] for m in metrics_list if m[metric] is not None]) for metric
+                                in metrics_list[0]}
+            ci = {metric: compute_confidence_interval(averaged_metrics[metric], y.size) for metric in averaged_metrics}
+
+            results[name] = {
+                'metrics': averaged_metrics,
+                'confidence_intervals': ci
+            }
 
     return results
 

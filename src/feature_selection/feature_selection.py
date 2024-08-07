@@ -12,6 +12,8 @@ from sklearn.model_selection import KFold
 from collections import defaultdict
 from typing import List, Optional
 from openpyxl import load_workbook
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.linear_model import LogisticRegression
 
 def calculate_p_values(df: pd.DataFrame,
                        outcome_column: str,
@@ -74,6 +76,10 @@ def calculate_p_values(df: pd.DataFrame,
     return p_values_df
 
 
+
+
+
+
 def calculate_auc_values(df: pd.DataFrame,
                        outcome_column: str,
                        categorical_columns: List[str] = [],
@@ -104,6 +110,56 @@ def calculate_auc_values(df: pd.DataFrame,
                 fpr, tpr, _ = roc_curve(df[outcome_column], normalized_feature_values)
                 roc_auc = auc(fpr, tpr)
                 auc_values[column] = roc_auc
+            except ValueError:
+                auc_values[column] = np.nan
+        else:
+            auc_values[column] = np.nan
+
+    auc_values_df = pd.DataFrame(list(auc_values.items()), columns=['Feature', 'AUC'])
+    auc_values_df = auc_values_df.sort_values(by=['AUC'], ascending=False)
+    return auc_values_df
+
+
+
+
+
+
+def calculate_auc_values_CV(df: pd.DataFrame,
+                         outcome_column: str,
+                         categorical_columns: List[str] = [],
+                         exclude_columns: List[str] = [],
+                         cv_folds: int = 5) -> pd.DataFrame:
+    """
+    Calculate cross-validated AUC values for each feature in the dataframe compared to the outcome variable.
+
+    :param df: DataFrame containing features and the outcome variable.
+    :param outcome_column: The name of the outcome column.
+    :param categorical_columns: List of names of categorical feature columns.
+    :param exclude_columns: List of columns to exclude from the analysis.
+    :param cv_folds: Number of cross-validation folds.
+    :return: DataFrame with features and their corresponding cross-validated AUC values.
+    """
+    print("Selecting best features defined by cross validation with AUC method.")
+    auc_values = {}
+    scaler = MinMaxScaler()
+    y = df[outcome_column].values
+
+    for column in df.columns:
+        if column == outcome_column or column in exclude_columns:
+            continue
+
+        if column in categorical_columns:
+            df[column] = pd.factorize(df[column])[0]
+
+        feature_values = df[column].values.reshape(-1, 1)
+        normalized_feature_values = scaler.fit_transform(feature_values).flatten().reshape(-1, 1)
+
+        if len(np.unique(y)) == 2:
+            model = LogisticRegression(solver='liblinear')
+            cv = StratifiedKFold(n_splits=cv_folds)
+            try:
+                auc_scores = cross_val_score(model, normalized_feature_values, y, cv=cv, scoring='roc_auc')
+                auc_values[column] = auc_scores.mean()
             except ValueError:
                 auc_values[column] = np.nan
         else:
